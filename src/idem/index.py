@@ -1,16 +1,20 @@
 import fcntl
 import hashlib
 import os
+import sqlite3
+import time
 from collections.abc import Generator, Iterator
-from concurrent.futures import Future, InterpreterPoolExecutor, as_completed
+from concurrent.futures import Future, ProcessPoolExecutor, as_completed
 from contextlib import contextmanager
 from pathlib import Path
-from typing import cast
+from typing import Iterable, Iterator, cast
 
 import typer
-from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 
 from .config import AppConfig
+from .index_db import IndexDB
+from .IndexStore import IndexStore
+from .models import FileMetadata
 
 
 @contextmanager
@@ -62,63 +66,131 @@ def find_all_files(path: Path) -> Iterator[str]:
             yield str(full_path)
 
 
-def calculate_sha256(filename: str, chunk_size: int) -> str:
-    hash_sha256 = hashlib.sha256()
+def calculate_sha256(path: Path, chunk_size: int) -> str:
+    hash = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            hash.update(chunk)
+    return hash.hexdigest()
+
+
+def hash_files_parallel_bounded(
+    paths: Iterable[Path], max_workers: int, max_in_flight: int, chunk_size: int
+) -> Iterator[tuple[Path, str]]:
+    if max_in_flight <= 0:
+        raise ValueError("max_in_flight must be > 0")
+    if max_workers <= 0:
+        raise ValueError("max_workers must be > 0")
+
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        in_flight: dict[Future[str], Path] = {}
+
+        def submit(path: Path) -> None:
+            future: Future[str] = executor.submit(calculate_sha256, path, chunk_size)
+            in_flight[future] = path
+
+        for path in paths:
+            # Apply backpressure
+            while len(in_flight) >= max_in_flight:
+                done: Future[str] = next(as_completed(in_flight))
+                yield in_flight.pop(done), done.result()
+
+            submit(path)
+
+        # Drain remaining futures
+        for future in as_completed(in_flight):
+            yield in_flight[future], future.result()
+
+
+def walk_files(root: Path) -> Iterator[Path]:
+    resolved_root: Path = root.resolve()
+
+    if not resolved_root.exists():
+        raise ValueError(f"{resolved_root} does not exist")
+    if not resolved_root.is_dir():
+        raise ValueError(f"{resolved_root} is not a directory")
+
+    for dirpath, _, filenames in os.walk(resolved_root):
+        base: Path = Path(dirpath)
+        for name in filenames:
+            path: Path = base / name
+            if path.is_symlink():
+                print(f"Symlink: {path}")
+                continue
+
+            if path.stat().st_size == 0:
+                continue
+
+            try:
+                _ = path.stat()
+            except FileNotFoundError:
+                continue
+
+            yield base / name
+
+
+def discover_dir_entries(path: Path) -> tuple[list[Path], list[Path]]:
+    """
+    Return immediate subdirectories and files of `path`.
+
+    Symlinks and zero-length files are ignored.
+    """
+    subdirs: list[Path] = []
+    files: list[Path] = []
 
     try:
-        with open(filename, "rb") as f:
-            for chunk in iter(lambda: f.read(chunk_size), b""):
-                hash_sha256.update(chunk)
-        return hash_sha256.hexdigest()
-    except Exception as e:
-        return f"ERROR:{e}"
+        with os.scandir(path) as it:
+            for entry in it:
+                if entry.is_symlink():
+                    continue
 
+                if entry.is_dir(follow_symlinks=False):
+                    subdirs.append(Path(entry.path))
+                elif entry.is_file(follow_symlinks=False):
+                    try:
+                        st = entry.stat()
+                    except FileNotFoundError:
+                        continue
 
-def collect_serials(target_dir: Path, hash: str) -> set[int]:
-    """Return all used serial numbers for files starting with <hash>-XX."""
+                    if st.st_size == 0:
+                        continue
 
-    used_serials: set[int] = {
-        int(path.name[-2:])
-        for path in target_dir.glob(pattern=f"{hash}-*")
-        if len(path.name) > 3 and path.name[-3:-2] == "-"
-    }
-
-    return used_serials
-
-
-def get_first_available_serial(serials: set[int]) -> int:
-    """Return first available serial number, i.e. lowest number not in set."""
-    serial: int = 1
-    while serial in serials:
-        serial += 1
-
-    return serial
-
-
-def get_original_path(path: Path) -> Path:
-    """Return the path pointed to by <hash_base>-01, if it exists."""
-    link: Path = path.with_name(f"{path.name}-01")
-    try:
-        return Path(os.readlink(link))
+                    files.append(Path(entry.path))
     except FileNotFoundError:
-        return Path()
+        # Directory disappeared between discovery and processing
+        pass
+
+    return subdirs, files
 
 
-def link_hash_to_orignal_file(filename: str, hash: str, dest_path: Path, n_chars: int) -> None:
-    """ """
-    src_path: Path = Path(filename)
+def index_files_in_dir(
+    *,
+    store: IndexStore,
+    dir_id: int,
+    files: list[Path],
+    max_workers: int,
+    max_in_flight: int,
+    chunk_size: int,
+    batch_size: int,
+) -> None:
+    processed: int = 0
 
-    if src_path.is_symlink():
-        # Skip if the source is a soft link. It won't count as a duplicate.
-        typer.echo(f"Skipping: {src_path} as it is a soft link.")
-        return
+    for file_path, hash_hex in hash_files_parallel_bounded(
+        paths=files,
+        max_workers=max_workers,
+        max_in_flight=max_in_flight,
+        chunk_size=chunk_size,
+    ):
+        try:
+            st = file_path.stat()
+        except (FileNotFoundError, PermissionError):
+            continue
 
-    prefix: str = hash[:n_chars]
-    target_dir: Path = dest_path / prefix
-    target_file: Path = target_dir / hash
+        hash_id = store.get_or_create_hash(
+            hash_hex=hash_hex,
+            file_size=st.st_size,
+        )
 
-    used_serials: set[int] = collect_serials(target_dir, hash)
-    serial: int = get_first_available_serial(used_serials)
         meta = FileMetadata(
             path=str(file_path),
             dir_id=dir_id,
@@ -129,88 +201,74 @@ def link_hash_to_orignal_file(filename: str, hash: str, dest_path: Path, n_chars
             hash_id=hash_id,
         )
 
-    target_with_serial_number: Path = target_file.with_name(f"{target_file.name}-{serial:02d}")
-    original_path: Path = get_original_path(target_file)
         store.upsert_file_metadata(meta)
 
-    hash_from_filename: str = target_with_serial_number.name[:-3]
-    if (
-        hash_from_filename == hash
-        and src_path.name == original_path.name
-        and src_path.stat().st_size == original_path.stat().st_size
-    ):
-        typer.echo(f"Skipping: {src_path} is duplicate.")
-        return
+        processed += 1
+        if processed >= batch_size:
+            store.commit()
+            store.begin()
+            processed = 0
 
-    with dir_lock(target_dir):
-        target_with_serial_number.symlink_to(filename)
+    if processed > 0:
+        store.commit()
+        store.begin()
 
 
-def organize_by_sha256(
-    src_path: Path,
-    dest_path: Path,
-    prefix_length: int,
+def index_single_dir(
+    *,
+    store: IndexStore,
+    dir_id: int,
+    dir_path: Path,
+    seen_at: int,
     max_workers: int,
     max_in_flight: int,
     chunk_size: int,
+    batch_size: int,
 ) -> None:
-    file_iter: Iterator[str] = find_all_files(path=src_path)  # generator, no memory explosion
+    """
+    Index exactly one directory.
 
-    with (
-        InterpreterPoolExecutor(max_workers=max_workers) as executor,
-        Progress(
-            SpinnerColumn(),
-            "[progress.description]{task.description}",
-            BarColumn(),
-            TextColumn("{task.completed} hashed"),
-        ) as progress,
-    ):
-        task_id = progress.add_task("Hashing files...", total=None)
-        futures: dict[Future[str], str] = {}
-        in_flight = 0
+    - Discover immediate subdirectories and enqueue them
+    - Hash files in this directory only
+    - Upsert file metadata
+    - Mark files as seen for this scan
+    """
 
-        # Streaming submission loop
-        for filename in file_iter:
-            if os.path.getsize(filename) == 0:
-                typer.echo(f"Skipping: {filename} has zero length.")
-                continue
+    subdirs: list[Path] = []
+    files: list[Path] = []
 
-            # Backpressure: limit number of active futures
-            while in_flight >= max_in_flight:
-                for finished in as_completed(futures):
-                    original_filename: str = futures.pop(finished)
-                    hash_val: str = finished.result()
-                    link_hash_to_orignal_file(original_filename, hash_val, dest_path, prefix_length)
-                    progress.update(task_id, advance=1)
-                    in_flight -= 1
-                break
+    subdirs, files = discover_dir_entries(path=dir_path)
 
-            fut: Future[str] = executor.submit(calculate_sha256, filename, chunk_size)
-            futures[fut] = filename
-            in_flight += 1
+    for subdir in subdirs:
+        store.insert_dir(path=str(subdir))
 
-        # Drain remaining tasks
-        for finished in as_completed(futures):
-            original_filename = futures.pop(finished)
-            hash_val = finished.result()
-            link_hash_to_orignal_file(original_filename, hash_val, dest_path, prefix_length)
-            progress.update(task_id, advance=1)
+    index_files_in_dir(
+        store=store,
+        dir_id=dir_id,
+        files=files,
+        max_workers=max_workers,
+        max_in_flight=max_in_flight,
+        chunk_size=chunk_size,
+        batch_size=batch_size,
+    )
+
+    # --- finalize directory ---
+    store.mark_files_seen_in_dir(
+        dir_id=dir_id,
+        seen_at=seen_at,
+    )
 
 
-def populate_dest_path(dest_path: Path, prefix_length: int) -> None:
-    total_number_of_dirs: int = cast(int, 16**prefix_length)
-
-    for dir_number in range(total_number_of_dirs):
-        dir_name: str = f"{dir_number:0{prefix_length}x}"
-        path: Path = dest_path / dir_name
-        os.makedirs(path, exist_ok=True)
-
-
-    typer.echo(f"🖥️  Gebruik {cfg.max_workers} CPU cores")
 def index_all_dirs(store: IndexStore, cfg: AppConfig) -> None:
+    scan_started_at: int = time.time_ns()
 
-    resolved_root_path: Path = cfg.root_path.resolve()
-    resolved_root_path.mkdir(parents=True, exist_ok=True)
+    store.begin()
+    store.reset_inflight_dirs()
+    store.commit()
+
+    store.begin()
+    while True:
+        dir_row: sqlite3.Row | None = store.get_next_pending_dir()
 
         if dir_row is None:
             break
@@ -229,8 +287,17 @@ def index_all_dirs(store: IndexStore, cfg: AppConfig) -> None:
             max_workers=cfg.max_workers,
             max_in_flight=cfg.max_inflight,
             chunk_size=cfg.chunk_size,
+            batch_size=500,
         )
+
+        store.mark_dir_done(dir_id, seen_at=scan_started_at)
+
+    store.commit()
+
+
 def index_command(cfg: AppConfig) -> None:
+    typer.echo(f"🖥️  Gebruik {cfg.max_workers} CPU cores")
+
     with IndexDB(cfg.db_path) as db:
         index_store: IndexStore = IndexStore(db)
         index_all_dirs(store=index_store, cfg=cfg)

@@ -1,3 +1,4 @@
+import multiprocessing
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Annotated
@@ -6,6 +7,8 @@ import typer
 
 from .config import CONFIG_FILENAME, AppConfig
 from .index import index_command
+from .index_db import IndexDB
+from .IndexStore import IndexStore
 
 idem_version: str = version(distribution_name="idem")
 app: typer.Typer = typer.Typer(
@@ -65,6 +68,18 @@ def parse_chunk_size(value: str) -> int:
             return base
     except ValueError:
         raise ValueError("Specified chuck size is not a number. Only K, M and G are allowed suffixes.")
+
+
+def initialize_db_root_dirs(db_path: Path, root_paths: list[Path]) -> None:
+    with IndexDB(db_path) as db:
+        index_store: IndexStore = IndexStore(db)
+        try:
+            db.begin()
+            index_store.insert_root_dirs([str(path) for path in root_paths])
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
 
 
 @app.command()
@@ -142,8 +157,11 @@ def analyze() -> None:
 
 
 @app.command()
-def add() -> None:
-    """Add source directory to the configuration."""
+def add(paths: list[str]) -> None:
+    """Add source directories to the configuration."""
+    with IndexDB(Path("idem.db")) as db:
+        store: IndexStore = IndexStore(db)
+        store.insert_root_dirs([path for path in paths])
     pass
 
 
