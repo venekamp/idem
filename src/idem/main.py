@@ -4,7 +4,7 @@ from typing import Annotated
 
 import typer
 
-from .config import CONFIG_FILE, AppConfig
+from .config import CONFIG_FILENAME, AppConfig
 from .index import index_command
 
 idem_version: str = version(distribution_name="idem")
@@ -86,21 +86,22 @@ def init(
     """
     root_path: Path = Path(root)
 
-    if CONFIG_FILE.exists() and not force:
+    if CONFIG_FILENAME.exists() and not force:
         typer.echo("Config file already exists. Use --force to overwrite.")
         raise typer.Exit(code=1)
 
     cfg: AppConfig = AppConfig(
-        prefix_length=prefix_length,
-        source_paths=[p for p in source_paths],
-        root_path=root_path,
-        max_workers=max_workers,
+        root_paths=[p.resolve() for p in source_paths],
+        db_path=Path("idem.db"),
+        max_workers=max_workers if max_workers != 0 else multiprocessing.cpu_count(),
         max_inflight=max_inflight,
         chunk_size=chunk_size,
     )
 
-    cfg.save(CONFIG_FILE)
-    typer.echo(f"Config written to {CONFIG_FILE}")
+    cfg.save(CONFIG_FILENAME)
+    typer.echo(f"Config written to {CONFIG_FILENAME}")
+
+    initialize_db_root_dirs(cfg.db_path, cfg.root_paths)
 
 
 @app.command()
@@ -112,21 +113,27 @@ def index(
     ] = None,
 ) -> None:
     """Index all files from the configured source paths."""
-    cfg: AppConfig = AppConfig.load()
+    try:
+        cfg: AppConfig = AppConfig.load()
 
-    if max_workers is not None:
-        cfg.max_workers = max_workers
-    if max_inflight is not None:
-        cfg.max_inflight = max_inflight
+        if not cfg.db_path.exists():
+            initialize_db_root_dirs(cfg.db_path, cfg.root_paths)
 
-    if chunk_size is not None:
-        try:
-            normalized_chunk_size: int = parse_chunk_size(chunk_size)
-            cfg.chunk_size = normalized_chunk_size
-        except ValueError as e:
-            raise typer.BadParameter(str(e))
+        if max_workers is not None:
+            cfg.max_workers = max_workers
+        if max_inflight is not None:
+            cfg.max_inflight = max_inflight
 
-    index_command(cfg)
+        if chunk_size is not None:
+            try:
+                normalized_chunk_size: int = parse_chunk_size(chunk_size)
+                cfg.chunk_size = normalized_chunk_size
+            except ValueError as e:
+                raise typer.BadParameter(str(e))
+
+        index_command(cfg)
+    except FileNotFoundError as e:
+        typer.echo(e)
 
 
 @app.command()

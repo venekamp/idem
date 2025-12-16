@@ -196,20 +196,31 @@ def populate_dest_path(dest_path: Path, prefix_length: int) -> None:
         os.makedirs(path, exist_ok=True)
 
 
-def index_command(cfg: AppConfig) -> None:
     typer.echo(f"🖥️  Gebruik {cfg.max_workers} CPU cores")
+def index_all_dirs(store: IndexStore, cfg: AppConfig) -> None:
 
     resolved_root_path: Path = cfg.root_path.resolve()
     resolved_root_path.mkdir(parents=True, exist_ok=True)
 
-    populate_dest_path(cfg.root_path, cfg.prefix_length)
+        if dir_row is None:
+            break
 
-    for src_path in cfg.source_paths:
-        organize_by_sha256(
-            src_path,
-            dest_path=cfg.root_path,
-            prefix_length=cfg.prefix_length,
+        dir_id: int = cast(int, dir_row["id"])
+        dir_path: str = cast(str, dir_row["path"])
+        print(f"Indexing dir: {dir_path}")
+
+        store.mark_dir_indexing(dir_id=dir_id)
+
+        index_single_dir(
+            store=store,
+            dir_id=dir_id,
+            dir_path=Path(dir_path),
+            seen_at=scan_started_at,
             max_workers=cfg.max_workers,
             max_in_flight=cfg.max_inflight,
             chunk_size=cfg.chunk_size,
         )
+def index_command(cfg: AppConfig) -> None:
+    with IndexDB(cfg.db_path) as db:
+        index_store: IndexStore = IndexStore(db)
+        index_all_dirs(store=index_store, cfg=cfg)

@@ -6,19 +6,19 @@ import yaml
 
 
 class RawAppConfig(TypedDict):
-    prefix_length: int
-    source_paths: list[str]
-    root_path: str
+    root_paths: list[str]
+    db_path: str
     max_workers: int
     max_inflight: int
     chunk_size: int
+    batch_size: int
 
 
 class RawConfigFile(TypedDict):
     config: RawAppConfig
 
 
-CONFIG_FILE: Path = Path("config.yaml")
+CONFIG_FILENAME: Path = Path("config.yaml")
 
 
 def type_error(value: object) -> NoReturn:
@@ -27,15 +27,18 @@ def type_error(value: object) -> NoReturn:
 
 @dataclass(slots=True)
 class AppConfig:
-    prefix_length: int
-    source_paths: list[Path]
-    root_path: Path
+    root_paths: list[Path]
+    db_path: Path
     max_workers: int
     max_inflight: int
     chunk_size: int
+    batch_size: int
 
     @staticmethod
-    def load(path: Path = CONFIG_FILE) -> AppConfig:
+    def load(path: Path = CONFIG_FILENAME) -> AppConfig:
+        if not path.exists():
+            raise FileNotFoundError("Missing config file. Run idem init first.")
+
         with path.open("r", encoding="UTF-8") as f:
             raw_loaded_obj: object | None = cast(object, yaml.safe_load(f))
 
@@ -54,27 +57,27 @@ class AppConfig:
         cfg: RawAppConfig = cast(RawAppConfig, cast(object, cfg_raw))
 
         appConfig: AppConfig = AppConfig(
-            prefix_length=cfg["prefix_length"],
-            source_paths=[Path(path) for path in cfg["source_paths"]],
-            root_path=Path(cfg["root_path"]),
+            root_paths=[Path(path) for path in cfg["root_paths"]],
+            db_path=Path(cfg["db_path"]),
             max_workers=cfg["max_workers"],
             max_inflight=cfg["max_inflight"],
             chunk_size=cfg["chunk_size"],
+            batch_size=cfg["batch_size"],
         )
 
         return appConfig
 
-    def save(self, path: Path = CONFIG_FILE) -> None:
+    def save(self, path: Path = CONFIG_FILENAME) -> None:
         raw: RawConfigFile = {"config": self.to_raw()}
         with path.open("w", encoding="utf-8") as f:
             yaml.safe_dump(raw, f, sort_keys=False)
 
     def to_raw(self) -> RawAppConfig:
         return {
-            "prefix_length": self.prefix_length,
-            "source_paths": [str(path) for path in self.source_paths],
-            "root_path": self.root_path.name,
+            "root_paths": [str(path) for path in self.root_paths],
+            "db_path": self.db_path.name,
             "max_workers": self.max_workers,
             "max_inflight": self.max_inflight,
             "chunk_size": self.chunk_size,
+            "batch_size": self.batch_size,
         }
