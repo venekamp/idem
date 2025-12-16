@@ -119,9 +119,19 @@ def link_hash_to_orignal_file(filename: str, hash: str, dest_path: Path, n_chars
 
     used_serials: set[int] = collect_serials(target_dir, hash)
     serial: int = get_first_available_serial(used_serials)
+        meta = FileMetadata(
+            path=str(file_path),
+            dir_id=dir_id,
+            size=st.st_size,
+            mtime_ns=st.st_mtime_ns,
+            inode=st.st_ino,
+            device=st.st_dev,
+            hash_id=hash_id,
+        )
 
     target_with_serial_number: Path = target_file.with_name(f"{target_file.name}-{serial:02d}")
     original_path: Path = get_original_path(target_file)
+        store.upsert_file_metadata(meta)
 
     hash_from_filename: str = target_with_serial_number.name[:-3]
     if (
