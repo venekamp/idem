@@ -70,11 +70,10 @@ def parse_chunk_size(value: str) -> int:
 @app.command()
 def init(
     source_paths: list[Path],
-    root: Annotated[str, typer.Option()] = "root",
-    prefix_length: Annotated[int, typer.Option()] = 3,
     max_workers: Annotated[int, typer.Option()] = 0,
     max_inflight: Annotated[int, typer.Option()] = 200,
     chunk_size: Annotated[int, typer.Option()] = 4096,
+    batch_size: Annotated[int, typer.Option()] = 500,
     force: Annotated[bool, typer.Option()] = False,
 ) -> None:
     """
@@ -84,7 +83,6 @@ def init(
     which files are soft linked to their original files from one or
     more source directories.
     """
-    root_path: Path = Path(root)
 
     if CONFIG_FILENAME.exists() and not force:
         typer.echo("Config file already exists. Use --force to overwrite.")
@@ -96,6 +94,7 @@ def init(
         max_workers=max_workers if max_workers != 0 else multiprocessing.cpu_count(),
         max_inflight=max_inflight,
         chunk_size=chunk_size,
+        batch_size=batch_size,
     )
 
     cfg.save(CONFIG_FILENAME)
