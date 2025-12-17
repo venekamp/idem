@@ -95,3 +95,8 @@ line-ending = "lf"
 
 # Like Black, respect magic trailing commas.
 skip-magic-trailing-comma = false
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.9",
+]
