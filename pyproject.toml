@@ -3,7 +3,7 @@ name = "idem-prune"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 dependencies = [
     "pyyaml>=6.0.3",
     "typer>=0.20.0",
@@ -26,7 +26,7 @@ include = []
 exclude = []
 extraPaths = []
 pythonPlatform = "Linux"
-pythonVersion = "3.14"
+pythonVersion = "3.12"
 #typeCheckingMode = "recommended"
 stubPath = "./typings"
 
