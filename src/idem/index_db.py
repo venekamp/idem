@@ -2,6 +2,7 @@ import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
 from types import TracebackType
+from typing import cast
 
 from .sql import dirs, files, hashes
 
@@ -78,5 +79,15 @@ class IndexDB:
     def fetchone(self, sql: str, params: Sequence[object]) -> object:
         self.execute(sql=sql, params=params)
 
-    def query_one(self) -> None:
-        pass
+    def query_one(self, sql: str, params: Sequence[object] | None = None) -> sqlite3.Row | None:
+        cursor: sqlite3.Cursor = self.connection.cursor()
+
+        if params is None:
+            _ = cursor.execute(sql)
+        else:
+            _ = cursor.execute(sql, params)
+        row: sqlite3.Row | None = cast(sqlite3.Row | None, cursor.fetchone())
+
+        cursor.close()
+
+        return row

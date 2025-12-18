@@ -60,22 +60,9 @@ class IndexStore:
             sql=files.UPSERT_FILE_METEDATA, params=(path, dir_id, size, mtime_ns, inode, device, hash_id)
         )
 
-    def query_one(self, sql: str, params: Sequence[object] | None = None) -> sqlite3.Row | None:
-        cursor: sqlite3.Cursor = self.db.connection.cursor()
-
-        if params is None:
-            _ = cursor.execute(sql)
-        else:
-            _ = cursor.execute(sql, params)
-        row: sqlite3.Row | None = cast(sqlite3.Row | None, cursor.fetchone())
-
-        cursor.close()
-
-        return row
-
     def get_or_create_hash(self, hash_hex: str, file_size: int) -> int:
         self.db.execute(sql=hashes.STORE_HASH, params=(hash_hex, file_size))
-        row: sqlite3.Row | None = self.query_one(sql=hashes.GET_HASH_ID, params=(hash_hex,))
+        row: sqlite3.Row | None = self.db.query_one(sql=hashes.GET_HASH_ID, params=(hash_hex,))
 
         assert row is not None
 
@@ -119,7 +106,7 @@ class IndexStore:
         Return one directory with status='pending', or None if none remain.
         """
 
-        row: sqlite3.Row | None = self.query_one(sql=dirs.GET_NEXT_PENDING_DIR)
+        row: sqlite3.Row | None = self.db.query_one(sql=dirs.GET_NEXT_PENDING_DIR)
 
         return row
 
