@@ -21,9 +21,8 @@ reports and review workflows are planned but not yet available.
 ![uv](https://img.shields.io/badge/packaging-uv-blueviolet)
 ![ruff](https://img.shields.io/badge/code%20style-ruff-46a2f1)
 ![basedpyright](https://img.shields.io/badge/types-basedpyright-4c1)
-![CI](https://github.com/<you>/idem/actions/workflows/ci.yml/badge.svg)
-![License](https://img.shields.io/badge/license-MIT-green)
-
+![CI](https://github.com/venekamp/idem/actions/workflows/ci.yml/badge.svg)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 ---
 
 ## What idem does
