@@ -5,6 +5,8 @@ from typing import Annotated
 
 import typer
 
+from idem.status import status_command
+
 from .config import CONFIG_FILENAME, AppConfig
 from .index import index_command
 from .index_db import IndexDB
@@ -175,7 +177,7 @@ def show() -> None:
 @app.command()
 def status() -> None:
     """Show which directories have been indexed."""
-    pass
+    status_command()
 
 
 @app.command(name="version")

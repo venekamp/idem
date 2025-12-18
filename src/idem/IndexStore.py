@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import cast
 
 from .index_db import IndexDB
-from .models import FileMetadata
+from .models import ContentStats, DirStats, FileMetadata, FileStats, IntegrityStats, StatusSnapshot
 from .sql import dirs, files, hashes
 
 
@@ -127,3 +127,128 @@ class IndexStore:
         Insert a directory into the dirs table if it does not already exist.
         """
         self.db.execute(sql=dirs.INSERT_DIR, params=(path,))
+
+    def _get_dir_stats(self) -> DirStats:
+        row: sqlite3.Row | None = self.db.query_one(
+            """
+            SELECT
+            COUNT(*) AS total,
+            SUM(status = 'pending')  AS pending,
+            SUM(status = 'indexing') AS indexing,
+            SUM(status = 'done')     AS done,
+            MAX(CASE WHEN status = 'done' THEN last_seen END) AS last_completed_scan
+            FROM dirs;
+            """
+        )
+
+        assert row is not None
+
+        return DirStats(
+            total=cast(int, row["total"]),
+            pending=cast(int, row["pending"]),
+            indexing=cast(int, row["indexing"]),
+            done=cast(int, row["done"]),
+            last_completed_scan=cast(int, row["last_completed_scan"]),
+        )
+
+    def _get_file_stats(self, last_scan: int | None) -> FileStats:
+        row = self.db.query_one(
+            """
+            SELECT
+            COUNT(*) AS total_files,
+            SUM(last_seen = ?) AS files_seen_last_scan,
+            SUM(last_seen < ? OR last_seen IS NULL) AS stale_files,
+            COALESCE(SUM(size), 0) AS total_bytes
+            FROM files;
+            """,
+            params=(last_scan, last_scan),
+        )
+
+        assert row is not None
+
+        return FileStats(
+            total_files=cast(int, row["total_files"]),
+            files_seen_last_scan=cast(int, row["files_seen_last_scan"] or 0),
+            stale_files=cast(int, row["stale_files"] or 0),
+            total_bytes=cast(int, row["total_bytes"]),
+        )
+
+    def _get_content_stats(self) -> ContentStats:
+        row = self.db.query_one(
+            """
+            WITH per_hash AS (
+            SELECT hash_id, COUNT(*) AS n
+            FROM files
+            GROUP BY hash_id
+            ),
+            ambiguous AS (
+            SELECT hash_id
+            FROM files
+            GROUP BY hash_id
+            HAVING COUNT(DISTINCT size) > 1
+            )
+            SELECT
+            SUM(n = 1) AS unique_hashes,
+            SUM(n > 1) AS duplicate_groups,
+            COALESCE(SUM(CASE WHEN n > 1 THEN n ELSE 0 END), 0) AS duplicate_files,
+            (SELECT COUNT(*) FROM ambiguous) AS unresolved_groups,
+            (SELECT COUNT(*) FROM files WHERE hash_id IN (SELECT hash_id FROM ambiguous))
+                AS unresolved_files
+            FROM per_hash;
+            """
+        )
+
+        assert row is not None
+
+        return ContentStats(
+            unique_hashes=cast(int, row["unique_hashes"] or 0),
+            duplicate_groups=cast(int, row["duplicate_groups"] or 0),
+            duplicate_files=cast(int, row["duplicate_files"] or 0),
+            unresolved_groups=cast(int, row["unresolved_groups"]),
+            unresolved_files=cast(int, row["unresolved_files"]),
+        )
+
+    def _get_integrity_stats(self) -> IntegrityStats:
+        row = self.db.query_one(
+            """
+            SELECT
+            (SELECT COUNT(*) FROM files WHERE dir_id NOT IN (SELECT id FROM dirs))
+                AS orphaned_files,
+            (SELECT COUNT(*) FROM hashes
+                WHERE id NOT IN (SELECT DISTINCT hash_id FROM files))
+                AS orphaned_hashes;
+            """
+        )
+
+        assert row is not None
+
+        return IntegrityStats(
+            orphaned_files=cast(int, row["orphaned_files"]),
+            orphaned_hashes=cast(int, row["orphaned_hashes"]),
+        )
+
+    def get_status_snapshot(self) -> StatusSnapshot:
+        dirs: DirStats = self._get_dir_stats()
+        files: FileStats = self._get_file_stats(dirs.last_completed_scan)
+        content: ContentStats = self._get_content_stats()
+        integrity: IntegrityStats = self._get_integrity_stats()
+
+        return StatusSnapshot(
+            last_completed_scan=dirs.last_completed_scan,
+            indexing_in_progress=dirs.indexing > 0,
+            total_dirs=dirs.total,
+            pending_dirs=dirs.pending,
+            indexing_dirs=dirs.indexing,
+            done_dirs=dirs.done,
+            total_files=files.total_files,
+            files_seen_last_scan=files.files_seen_last_scan,
+            stale_files=files.stale_files,
+            total_bytes=files.total_bytes,
+            unique_hashes=content.unique_hashes,
+            duplicate_groups=content.duplicate_groups,
+            duplicate_files=content.duplicate_files,
+            unresolved_groups=content.unresolved_groups,
+            unresolved_files=content.unresolved_files,
+            orphaned_files=integrity.orphaned_files,
+            orphaned_hashes=integrity.orphaned_hashes,
+        )
