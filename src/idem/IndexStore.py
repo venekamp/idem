@@ -17,7 +17,7 @@ class IndexStore:
         cursor: sqlite3.Cursor = self.db.connection.cursor()
 
         _ = cursor.execute(sql, params)
-        row: sqlite3.Row | None = self.query_one(sql, params)
+        row: sqlite3.Row | None = self.db.query_one(sql, params)
         assert row is not None
 
         cursor.close()
@@ -30,7 +30,7 @@ class IndexStore:
             self.db.execute(sql=dirs.INSERT_ROOT_DIR, params=(root_path, scan_started_at))
 
     def get_dir_id(self, path: str) -> int:
-        row: sqlite3.Row | None = self.query_one(sql=dirs.SELECT_DIR_ID, params=(path,))
+        row: sqlite3.Row | None = self.db.query_one(sql=dirs.SELECT_DIR_ID, params=(path,))
 
         assert row is not None
 
