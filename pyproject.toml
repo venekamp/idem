@@ -28,7 +28,7 @@ extraPaths = []
 pythonPlatform = "Linux"
 pythonVersion = "3.12"
 #typeCheckingMode = "recommended"
-stubPath = "./typings"
+# stubPath = "./typings"
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
@@ -98,5 +98,7 @@ skip-magic-trailing-comma = false
 
 [dependency-groups]
 dev = [
+    "basedpyright>=1.36.1",
+    "pytest>=9.0.2",
     "ruff>=0.14.9",
 ]

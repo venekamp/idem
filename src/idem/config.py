@@ -35,7 +35,7 @@ class AppConfig:
     batch_size: int
 
     @staticmethod
-    def load(path: Path = CONFIG_FILENAME) -> AppConfig:
+    def load(path: Path = CONFIG_FILENAME) -> "AppConfig":
         if not path.exists():
             raise FileNotFoundError("Missing config file. Run idem init first.")
 

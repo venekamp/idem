@@ -3,11 +3,11 @@ import hashlib
 import os
 import sqlite3
 import time
-from collections.abc import Generator, Iterator
+from collections.abc import Generator, Iterable, Iterator
 from concurrent.futures import Future, ProcessPoolExecutor, as_completed
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterable, Iterator, cast
+from typing import cast
 
 import typer
 

@@ -22,7 +22,9 @@ jobs:
           python-version: ${{ matrix.python_version }}
 
       - name: Install uv
-        run: pip install --upgrade uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Extract version from tag
         id: tag
@@ -43,6 +45,7 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Verify versions match
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           if [ "${{ steps.tag.outputs.version }}" != "${{ steps.pyproject.outputs.version }}" ]; then
             echo "Tag version and pyproject.toml version do not match!"
