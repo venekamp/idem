@@ -10,7 +10,8 @@ from .index import index_command
 from .index_db import IndexDB
 from .IndexStore import IndexStore
 
-idem_version: str = version(distribution_name="idem")
+DISTRIBUTION_NAME: str = "idem-prune"
+idem_version: str = version(distribution_name=DISTRIBUTION_NAME)
 app: typer.Typer = typer.Typer(
     help=f"idem — identify identical files\n\nVersion: {idem_version}",
 )
@@ -34,7 +35,7 @@ def print_version(is_version: bool) -> None:
         return
 
     try:
-        ver: str = version(distribution_name="idem")
+        ver: str = version(distribution_name=DISTRIBUTION_NAME)
     except PackageNotFoundError:
         ver = "unknown (package not installed)"
 
