@@ -5,12 +5,11 @@ from typing import Annotated
 
 import typer
 
-from idem.status import status_command
-
 from .config import CONFIG_FILENAME, AppConfig
 from .index import index_command
 from .index_db import IndexDB
 from .IndexStore import IndexStore
+from .status import status_command
 
 DISTRIBUTION_NAME: str = "idem-prune"
 idem_version: str = version(distribution_name=DISTRIBUTION_NAME)
